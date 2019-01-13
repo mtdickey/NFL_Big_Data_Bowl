@@ -1,16 +1,23 @@
-setwd("D:/NFL Big Data Bowl")
+setwd("D:/NFL_Big_Data_Bowl")
 
 library(tidyverse)
 
-file.tracking <- "https://raw.githubusercontent.com/nfl-football-ops/Big-Data-Bowl/master/Data/tracking_gameId_2017100110.csv"
-tracking.example <- read_csv(file.tracking)
+### Download all files to drive
+for(i in 1:length(unique(games.sum$gameId))){
+  file.tracking <- paste0("https://raw.githubusercontent.com/nfl-football-ops/Big-Data-Bowl/master/Data/tracking_gameId_", unique(games.sum$gameId)[i], ".csv")
+  tracking.example <- read_csv(file.tracking)
+  write.csv(tracking.example, file = paste0("tracking_gameId_", unique(games.sum$gameId)[i], ".csv"), row.names = F)
+}
 
+## Game summary info
 file.game <- "https://raw.githubusercontent.com/nfl-football-ops/Big-Data-Bowl/master/Data/games.csv"
 games.sum <- read_csv(file.game) 
 
+## Play summary info
 file.plays <- "https://raw.githubusercontent.com/nfl-football-ops/Big-Data-Bowl/master/Data/plays.csv"
 plays.sum <- read_csv(file.plays) 
 
+### Merged all together
 tracking.example.merged <- tracking.example %>% inner_join(games.sum) %>% inner_join(plays.sum) 
 
 example.play <- tracking.example.merged %>% filter(playId == 1363)
