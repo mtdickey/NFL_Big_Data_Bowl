@@ -1,6 +1,9 @@
 setwd("D:/NFL_Big_Data_Bowl")
 
 library(tidyverse)
+library(gganimate)
+library(cowplot)
+library(dtwclust)
 
 ### Download all files to drive
 for(i in 1:length(unique(games.sum$gameId))){
@@ -8,6 +11,10 @@ for(i in 1:length(unique(games.sum$gameId))){
   tracking.example <- read_csv(file.tracking)
   write.csv(tracking.example, file = paste0("tracking_gameId_", unique(games.sum$gameId)[i], ".csv"), row.names = F)
 }
+
+### For isolating one play
+file.tracking <- "https://raw.githubusercontent.com/nfl-football-ops/Big-Data-Bowl/master/Data/tracking_gameId_2017100110.csv"
+tracking.example <- read_csv(file.tracking)
 
 ## Game summary info
 file.game <- "https://raw.githubusercontent.com/nfl-football-ops/Big-Data-Bowl/master/Data/games.csv"
@@ -17,16 +24,17 @@ games.sum <- read_csv(file.game)
 file.plays <- "https://raw.githubusercontent.com/nfl-football-ops/Big-Data-Bowl/master/Data/plays.csv"
 plays.sum <- read_csv(file.plays) 
 
+## Play summary info
+file.players <- "https://raw.githubusercontent.com/nfl-football-ops/Big-Data-Bowl/master/Data/players.csv"
+players.sum <- read_csv(file.players) 
+
 ### Merged all together
-tracking.example.merged <- tracking.example %>% inner_join(games.sum) %>% inner_join(plays.sum) 
+tracking.example.merged <- tracking.example %>% inner_join(games.sum) %>% inner_join(plays.sum) %>% inner_join(players.sum)
 
 example.play <- tracking.example.merged %>% filter(playId == 1363)
 
 example.play %>% select(playDescription) %>% slice(1)
 
-
-library(gganimate)
-library(cowplot)
 
 ## General field boundaries
 xmin <- 0
@@ -81,3 +89,40 @@ animate.play <- ggplot() +
 ## Ensure timing of play matches 10 frames-per-second
 play.length.ex <- length(unique(example.play$frame.id))
 animate(animate.play, fps = 10, nframe = play.length.ex)
+
+
+### Isolate the movement from ball snap to pass arriving for all receivers
+ball.snap.time <- as.integer((example.play %>% filter(event == "ball_snap") %>% summarise(time = min(frame.id)))[1])
+pass.arrive.time <- as.integer((example.play %>% filter(event == "pass_arrived") %>% summarise(time = min(frame.id)))[1])
+routes <- example.play %>% filter(PositionAbbr %in% c("WR", "TE") & frame.id >= ball.snap.time & frame.id <= pass.arrive.time)
+route.start.positions <- routes %>% filter(frame.id == ball.snap.time & PositionAbbr %in% c("WR", "TE")) %>%
+                                    group_by(nflId, displayName) %>%
+                                    summarise(x.start = min(x),
+                                              y.start = min(y))
+routes <- routes %>% inner_join(route.start.positions, by = c("nflId", "displayName"))
+routes$x.trans <- routes$x - routes$x.start
+routes$y.trans <- routes$y - routes$y.start
+routes$y.trans.abs <- abs(routes$y - routes$y.start)
+routes %>% ggplot(aes(x = x.trans, y = y.trans)) + geom_line(aes(color = displayName), size = 1) + theme_grey()
+routes %>% ggplot(aes(x = x.trans, y = y.trans.abs)) + geom_line(aes(color = displayName), size = 1) + theme_grey()
+
+
+### Multivariate timeseries clustering using dynamic time warping package (dtwclust)
+routesMV <- list(Keenan = matrix(data = c(routes$x.trans[which(routes$displayName == "Keenan Allen")],
+                                          routes$y.trans.abs[which(routes$displayName == "Keenan Allen")]), 
+                                 nrow = length(which(routes$displayName == "Keenan Allen")), ncol = 2),
+                 Tyrell = matrix(data = c(routes$x.trans[which(routes$displayName == "Tyrell Williams")],
+                                          routes$y.trans.abs[which(routes$displayName == "Tyrell Williams")]), 
+                                 nrow = length(which(routes$displayName == "Hunter Henry")), ncol = 2),
+                 Hunter = matrix(data = c(routes$x.trans[which(routes$displayName == "Hunter Henry")],
+                                          routes$y.trans.abs[which(routes$displayName == "Hunter Henry")]), 
+                                 nrow = length(which(routes$displayName == "Hunter Henry")), ncol = 2),
+                 Sean   = matrix(data = c(routes$x.trans[which(routes$displayName == "Sean McGrath")],
+                                          routes$y.trans.abs[which(routes$displayName == "Sean McGrath")]), 
+                                 nrow = length(which(routes$displayName == "Sean McGrath")), ncol = 2))
+# Multivariate series provided as a list of matrices, using GAK distance
+mvc <- tsclust(routesMV, k = 2L, distance = "gak", seed = 8675309L)
+# Note how the variables of each series are appended one after the other in the plot
+plot(mvc, labels = list(nudge_x = -10, nudge_y = 1))  ## x then abs y
+
+### Keenan and Tyrell's routes are put into group 2 (longer routes), while Hunter/Sean are put into short screen/blocking routes
